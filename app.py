@@ -20,6 +20,7 @@ CERT_DOMAIN = os.environ.get("CERT_DOMAIN", "144-124-226-50.sslip.io")
 CERT_PATH = f"/etc/letsencrypt/live/{CERT_DOMAIN}/fullchain.pem"
 KEY_PATH = f"/etc/letsencrypt/live/{CERT_DOMAIN}/privkey.pem"
 USE_TLS = os.path.exists(CERT_PATH) and os.path.exists(KEY_PATH)
+DAEMON_USER = os.environ.get("DAEMON_USER", "claudeweb")
 PORT = int(os.environ.get("PORT", "443" if USE_TLS else "8080"))
 LOGIN_WINDOW_SECS = 300
 LOGIN_MAX_ATTEMPTS = 5
@@ -242,11 +243,17 @@ class Handler(BaseHTTPRequestHandler):
 
         sessions = load_sessions()
         claude_session_id = sessions.get(token, {}).get("claude_session_id")
-        cmd = ["claude", "-p", message, "--output-format", "json", "--dangerously-skip-permissions"]
+        claude_bin = f"/home/{DAEMON_USER}/.local/bin/claude"
+        cmd = [claude_bin, "-p", message, "--output-format", "json", "--dangerously-skip-permissions"]
         if claude_session_id:
             cmd += ["--resume", claude_session_id]
+        daemon_home = "/home/" + DAEMON_USER
         try:
-            proc = subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_SECS)
+            proc = subprocess.run(
+                cmd, cwd=daemon_home, user=DAEMON_USER,
+                env={**os.environ, "HOME": daemon_home},
+                capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_SECS,
+            )
         except subprocess.TimeoutExpired:
             self._send_json(504, {"error": "claude timed out"})
             return
