@@ -1,3 +1,4 @@
 config.json
 sessions.json
+token_usage.json
 __pycache__/

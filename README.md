@@ -11,6 +11,8 @@ Password-gated web chat front-end for a headless Claude Code daemon running on a
   the reply, resuming the same Claude session for conversational continuity.
 - Serves over TLS using a Let's Encrypt certificate for a free `sslip.io` hostname that resolves
   automatically to the server's IP (no domain purchase or registrar signup required).
+- `/dashboard` (same session cookie as the chat) shows a live view of Claude token usage
+  (input/output tokens vs a configurable limit) and host CPU/RAM/disk usage.
 
 ## Deploy on a fresh VPS
 
@@ -44,8 +46,23 @@ Until that migration happens, treat this deployment as **root-equivalent remote 
 gated by a single password** — keep the password strong, don't share the URL, and be aware that
 compromise of the password compromises the whole server.
 
+## Dashboard
+
+`/dashboard` reads token counts from local Claude Code session transcripts
+(`~/.claude/projects/**/*.jsonl`, both root's and `$DAEMON_USER`'s) — no extra
+instrumentation on the chat path. A background thread in `app.py` rescans them
+every 5 minutes and appends a snapshot to `token_usage.json` (gitignored, holds
+up to a week of 5-minute samples). The page polls `GET /api/stats` every 15s for
+the latest totals plus live CPU/RAM/disk stats (read from `/proc` and
+`statvfs`, no `psutil`/third-party dependency).
+
+Set `"token_limit"` in `config.json` to the token budget you want the usage
+meter measured against (input + output tokens); set it to `0` to disable the
+meter and just show raw counts.
+
 ## Files
 
 - `app.py` — the server (Python stdlib only, no dependencies).
+- `dashboard.py` — token-usage + host-stats collection for `/dashboard` (stdlib only).
 - `bootstrap.sh` — fresh-VPS setup script.
-- `config.json` / `sessions.json` — local secrets/state, gitignored.
+- `config.json` / `sessions.json` / `token_usage.json` — local secrets/state, gitignored.
