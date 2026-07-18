@@ -62,7 +62,27 @@ meter and just show raw counts.
 
 ## Files
 
-- `app.py` — the server (Python stdlib only, no dependencies).
-- `dashboard.py` — token-usage + host-stats collection for `/dashboard` (stdlib only).
+Python stdlib only, no dependencies, flat modules (no package):
+
+- `app.py` — entry point: starts the token-usage collector thread and the HTTP server.
+- `settings.py` — config constants (paths, TLS, daemon user, timeouts).
+- `storage.py` — `config.json` / `sessions.json` persistence.
+- `auth.py` — password hashing/check, session cookies, login rate limiting.
+- `claude_daemon.py` — runs `claude -p` as the daemon user, injecting `.env` credentials
+  into just that subprocess's environment. Shared by the chat handler and night mode.
+- `server.py` — the `Handler` (HTTP routing) and the TLS server class.
+- `templates.py` — the login/chat/dashboard HTML pages.
+- `night_control.py` — web-side glue for the `/night` chat command (start/status/stop).
+- `night_mode.py` — the actual ~8h autonomous overnight run loop (see below).
+- `dashboard.py` — token-usage + host-stats collection for `/dashboard`.
 - `bootstrap.sh` — fresh-VPS setup script.
-- `config.json` / `sessions.json` / `token_usage.json` — local secrets/state, gitignored.
+- `config.json` / `sessions.json` / `token_usage.json` / `night_task.txt` /
+  `night_mode.log` / `night_mode.pid` — local secrets/state, gitignored.
+
+## Night mode
+
+Send `/night <task>` in the chat to kick off an unattended ~8h `claude -p` loop on that task
+(auto-resuming the session after every call — success, error, or timeout — until the task
+says it's done or the time budget runs out). `/night status` shows whether it's running plus
+a log tail; `/night stop` sends it SIGTERM. Budget is `NIGHT_MODE_BUDGET_SECS` (default 8h),
+per-call cap is `NIGHT_MODE_MAX_CALL_SECS` (default 1h).
