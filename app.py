@@ -2,22 +2,24 @@
 """Password-gated chat front-end for a headless Claude Code daemon.
 
 Entry point only. See:
-  settings.py       -- config constants
-  storage.py        -- config.json / sessions.json persistence
-  auth.py           -- password check, cookies, login rate limiting
-  claude_daemon.py  -- runs `claude -p` as the daemon user
-  night_control.py  -- web-side glue for the /night background run
-  templates.py      -- HTML pages
-  server.py         -- HTTP handler + TLS server
-  dashboard.py      -- token usage / host stats for /dashboard
+  core/settings.py        -- config constants
+  core/storage.py         -- config.json / sessions.json persistence
+  core/auth.py            -- password check, cookies, login rate limiting
+  daemon/claude_daemon.py -- runs `claude -p` as the daemon user
+  daemon/night_mode.py    -- ~8h autonomous overnight run loop
+  daemon/night_control.py -- web-side glue for the /night chat command
+  web/templates.py        -- HTML pages
+  web/server.py           -- HTTP handler + TLS server
+  web/dashboard.py        -- token usage / host stats for /dashboard
+  var/state, var/log      -- runtime state and logs (gitignored)
 """
 import ssl
 import threading
 from http.server import ThreadingHTTPServer
 
-import dashboard
-import settings
-from server import Handler, TLSThreadingHTTPServer
+from core import settings
+from web import dashboard
+from web.server import Handler, TLSThreadingHTTPServer
 
 
 def main():

@@ -10,8 +10,9 @@ import json
 import os
 import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-USAGE_PATH = os.path.join(BASE_DIR, "token_usage.json")
+from core import settings
+
+USAGE_PATH = os.path.join(settings.STATE_DIR, "token_usage.json")
 COLLECT_INTERVAL_SECS = 300
 HISTORY_MAX_POINTS = 2016  # 1 week at 5-min resolution
 

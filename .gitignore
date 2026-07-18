@@ -1,9 +1,4 @@
-config.json
-sessions.json
-token_usage.json
-app.log
-night_task.txt
-night_mode.log
-night_mode.pid
-night_mode_cron.log
+var/state/
+var/log/
 __pycache__/
+*/__pycache__/

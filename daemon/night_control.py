@@ -4,8 +4,8 @@ import signal
 import subprocess
 import threading
 
-import night_mode
-import settings
+from core import settings
+from . import night_mode
 
 USAGE = (
     "Usage:\n"
@@ -61,7 +61,7 @@ def handle_command(rest):
 
     log_f = open(settings.NIGHT_CRON_LOG, "a")
     proc = subprocess.Popen(
-        ["/usr/bin/python3", night_mode.__file__],
+        ["/usr/bin/python3", "-m", "daemon.night_mode"],
         cwd=settings.BASE_DIR, env=os.environ.copy(),
         stdout=log_f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         start_new_session=True,

@@ -13,17 +13,20 @@ echo "==> domain: $DOMAIN"
 apt-get update -y
 apt-get install -y python3 certbot
 
+echo "==> creating var/state and var/log"
+mkdir -p "$DIR/var/state" "$DIR/var/log"
+
 echo "==> generating password hash"
 python3 - <<PY
 import json, secrets, hashlib, os
 password = os.environ["PASSWORD"]
 salt = secrets.token_hex(16)
 h = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000).hex()
-json.dump({'salt': salt, 'password_hash': h}, open('$DIR/config.json', 'w'))
-if not os.path.exists('$DIR/sessions.json'):
-    open('$DIR/sessions.json', 'w').write('{}')
+json.dump({'salt': salt, 'password_hash': h}, open('$DIR/var/state/config.json', 'w'))
+if not os.path.exists('$DIR/var/state/sessions.json'):
+    open('$DIR/var/state/sessions.json', 'w').write('{}')
 PY
-chmod 600 "$DIR/config.json" "$DIR/sessions.json"
+chmod 600 "$DIR/var/state/config.json" "$DIR/var/state/sessions.json"
 
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
   echo "==> requesting TLS certificate for $DOMAIN"

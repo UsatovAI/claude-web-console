@@ -5,13 +5,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
-import auth
-import claude_daemon
-import dashboard
-import night_control
-import settings
-import storage
-import templates
+from core import auth, settings, storage
+from daemon import claude_daemon, night_control
+from . import dashboard, templates
 
 
 class Handler(BaseHTTPRequestHandler):

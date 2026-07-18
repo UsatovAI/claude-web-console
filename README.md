@@ -62,22 +62,27 @@ meter and just show raw counts.
 
 ## Files
 
-Python stdlib only, no dependencies, flat modules (no package):
+Python stdlib only, no dependencies. Grouped into packages so no directory holds more than
+a handful of files:
 
 - `app.py` — entry point: starts the token-usage collector thread and the HTTP server.
-- `settings.py` — config constants (paths, TLS, daemon user, timeouts).
-- `storage.py` — `config.json` / `sessions.json` persistence.
-- `auth.py` — password hashing/check, session cookies, login rate limiting.
-- `claude_daemon.py` — runs `claude -p` as the daemon user, injecting `.env` credentials
-  into just that subprocess's environment. Shared by the chat handler and night mode.
-- `server.py` — the `Handler` (HTTP routing) and the TLS server class.
-- `templates.py` — the login/chat/dashboard HTML pages.
-- `night_control.py` — web-side glue for the `/night` chat command (start/status/stop).
-- `night_mode.py` — the actual ~8h autonomous overnight run loop (see below).
-- `dashboard.py` — token-usage + host-stats collection for `/dashboard`.
-- `bootstrap.sh` — fresh-VPS setup script.
-- `config.json` / `sessions.json` / `token_usage.json` / `night_task.txt` /
-  `night_mode.log` / `night_mode.pid` — local secrets/state, gitignored.
+- `core/` — config and persistence, no HTTP or subprocess concerns.
+  - `settings.py` — config constants (paths, TLS, daemon user, timeouts).
+  - `storage.py` — `config.json` / `sessions.json` persistence.
+  - `auth.py` — password hashing/check, session cookies, login rate limiting.
+- `daemon/` — everything that talks to the `claude` CLI as the daemon user.
+  - `claude_daemon.py` — runs `claude -p`, injecting `.env` credentials into just that
+    subprocess's environment. Shared by the chat handler and night mode.
+  - `night_mode.py` — the ~8h autonomous overnight run loop (see below).
+  - `night_control.py` — web-side glue for the `/night` chat command (start/status/stop).
+- `web/` — the HTTP layer.
+  - `server.py` — the `Handler` (HTTP routing) and the TLS server class.
+  - `templates.py` — the login/chat/dashboard HTML pages.
+  - `dashboard.py` — token-usage + host-stats collection for `/dashboard`.
+- `var/state/`, `var/log/` — runtime state and logs, gitignored (`config.json`,
+  `sessions.json`, `token_usage.json`, `night_task.txt`, `night_mode.pid`,
+  `app.log`, `night_mode.log`, `night_mode_cron.log`).
+- `bootstrap.sh` — fresh-VPS setup script (creates `var/state` and `var/log`).
 
 ## Night mode
 

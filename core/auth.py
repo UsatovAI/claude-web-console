@@ -5,8 +5,7 @@ import secrets
 import time
 from http.cookies import SimpleCookie
 
-import settings
-import storage
+from . import settings, storage
 
 _login_attempts = {}  # ip -> [timestamps of failed attempts]
 

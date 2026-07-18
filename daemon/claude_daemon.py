@@ -8,7 +8,7 @@ import json
 import os
 import subprocess
 
-import settings
+from core import settings
 
 DAEMON_HOME = f"/home/{settings.DAEMON_USER}"
 CLAUDE_BIN = f"{DAEMON_HOME}/.local/bin/claude"

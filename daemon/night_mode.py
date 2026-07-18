@@ -4,17 +4,19 @@
 Reads a task from night_task.txt and keeps a `claude -p` session going,
 immediately relaunching it (via --resume) whenever a call ends -- success,
 error, or timeout -- until the task signals completion or the time budget
-runs out. Meant to be triggered by cron once nightly.
+runs out. Started by night_control.handle_command() via the /night chat
+command; run standalone with `python3 -m daemon.night_mode` from the repo
+root so the package-relative imports resolve.
 """
 import os
 import time
 
-import claude_daemon
+from core import settings
+from . import claude_daemon
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TASK_PATH = os.path.join(BASE_DIR, "night_task.txt")
-LOG_PATH = os.path.join(BASE_DIR, "night_mode.log")
-PID_PATH = os.path.join(BASE_DIR, "night_mode.pid")
+TASK_PATH = os.path.join(settings.STATE_DIR, "night_task.txt")
+LOG_PATH = os.path.join(settings.LOG_DIR, "night_mode.log")
+PID_PATH = os.path.join(settings.STATE_DIR, "night_mode.pid")
 
 TOTAL_BUDGET_SECS = int(os.environ.get("NIGHT_MODE_BUDGET_SECS", 8 * 3600))
 MAX_CALL_SECS = int(os.environ.get("NIGHT_MODE_MAX_CALL_SECS", 3600))

@@ -2,7 +2,7 @@
 import json
 import os
 
-import settings
+from . import settings
 
 
 def load_config():
