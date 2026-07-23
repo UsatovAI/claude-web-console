@@ -3,11 +3,11 @@ import json
 import socketserver
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from core import auth, settings, storage
-from daemon import claude_daemon, night_control
-from . import dashboard, templates
+from daemon import night_control, transcripts
+from . import chat_jobs, dashboard, github_review, templates
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -38,20 +38,46 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
             if not self._authed():
                 self._send(200, templates.LOGIN_PAGE.format(error=""))
             else:
                 self._send(200, templates.CHAT_PAGE.format())
-        elif self.path == "/dashboard":
+        elif path == "/dashboard":
             if not self._authed():
                 self._send(200, templates.LOGIN_PAGE.format(error=""))
             else:
                 self._send(200, templates.DASHBOARD_PAGE)
-        elif self.path == "/api/stats":
+        elif path == "/api/stats":
             self._handle_stats()
+        elif path == "/api/sessions":
+            self._handle_list_sessions()
+        elif path == "/api/sessions/messages":
+            self._handle_session_messages(parse_qs(urlparse(self.path).query))
+        elif path == "/api/chat/status":
+            self._handle_chat_status(parse_qs(urlparse(self.path).query))
         else:
             self._send(404, "not found")
+
+    def _handle_list_sessions(self):
+        token = self._authed()
+        if not token:
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        current = storage.load_sessions().get(token, {}).get("claude_session_id")
+        self._send_json(200, {"sessions": transcripts.list_sessions(), "current": current})
+
+    def _handle_session_messages(self, query):
+        if not self._authed():
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        session_id = (query.get("id") or [""])[0]
+        messages = transcripts.load_messages(session_id) if session_id else None
+        if messages is None:
+            self._send_json(404, {"error": "session not found"})
+            return
+        self._send_json(200, {"messages": messages})
 
     def _handle_stats(self):
         if not self._authed():
@@ -61,15 +87,22 @@ class Handler(BaseHTTPRequestHandler):
         data = dashboard.load_history()
         history = data.get("history", [])
         totals = history[-1] if history else dashboard.latest_totals(settings.DAEMON_USER)
+        window = dashboard.window_totals(history, settings.USAGE_WINDOW_SECS)
+        # 24h of 5-min samples, so the 5h window marker sits inside a wider view.
+        chart_points = max(1, settings.USAGE_WINDOW_SECS // dashboard.COLLECT_INTERVAL_SECS) * 5 + 1
         self._send_json(200, {
             "tokens": {
                 "input_tokens": totals.get("input_tokens", 0),
                 "output_tokens": totals.get("output_tokens", 0),
                 "cache_creation_tokens": totals.get("cache_creation_tokens", 0),
                 "cache_read_tokens": totals.get("cache_read_tokens", 0),
+                "window_input_tokens": window.get("input_tokens", 0),
+                "window_output_tokens": window.get("output_tokens", 0),
+                "window_secs": settings.USAGE_WINDOW_SECS,
                 "limit": cfg.get("token_limit"),
             },
-            "history": history[-100:],
+            "history": history[-chart_points:],
+            "window_start_ts": dashboard.window_start_ts(history, settings.USAGE_WINDOW_SECS),
             "last_collected": history[-1]["ts"] if history else None,
             "system": dashboard.system_stats(),
         })
@@ -79,8 +112,43 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_login()
         elif self.path == "/api/chat":
             self._handle_chat()
+        elif self.path == "/api/sessions/resume":
+            self._handle_resume_session()
+        elif self.path == "/api/sessions/new":
+            self._handle_new_session()
         else:
             self._send(404, "not found")
+
+    def _handle_resume_session(self):
+        token = self._authed()
+        if not token:
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            data = json.loads(self.rfile.read(length).decode())
+        except Exception:
+            self._send_json(400, {"error": "bad request"})
+            return
+        session_id = (data.get("session_id") or "").strip()
+        messages = transcripts.load_messages(session_id) if session_id else None
+        if messages is None:
+            self._send_json(404, {"error": "session not found"})
+            return
+        sessions = storage.load_sessions()
+        sessions.setdefault(token, {})["claude_session_id"] = session_id
+        storage.save_sessions(sessions)
+        self._send_json(200, {"messages": messages})
+
+    def _handle_new_session(self):
+        token = self._authed()
+        if not token:
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        sessions = storage.load_sessions()
+        sessions.setdefault(token, {})["claude_session_id"] = None
+        storage.save_sessions(sessions)
+        self._send_json(200, {"ok": True})
 
     def _client_ip(self):
         return self.client_address[0]
@@ -129,25 +197,53 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"reply": reply})
             return
 
+        # SCRUM-13: a github.com PR/MR URL anywhere in the message is treated
+        # as "review this PR" -- fetch its diff, review with code-review-skill,
+        # post the result as a PR comment (see web/github_review.py for the
+        # detection rule and why it's kept this simple). Routed through the
+        # same async job store as a normal chat turn since the review pass
+        # (diff fetch + a full `claude -p` turn) can outlast a proxy timeout.
+        # Gated by config.yaml's github_review flag (settings.GITHUB_REVIEW)
+        # -- when off, a pasted PR link just goes through as a normal chat
+        # message instead. This flag only controls whether the feature
+        # triggers at all; live posting vs. dry-run is the separate
+        # settings.GITHUB_REVIEW_COMMENT switch, untouched by it.
+        pr_request = settings.GITHUB_REVIEW and github_review.detect_pr_request(message)
+        if pr_request:
+            owner, repo, pr_number, url = pr_request
+            job_id = chat_jobs.start_github_review_job(token, owner, repo, pr_number, url)
+            self._send_json(200, {"job_id": job_id})
+            return
+
         timeout_secs = settings.TIMEOUT_TIERS.get(
             data.get("timeout"), settings.TIMEOUT_TIERS[settings.DEFAULT_TIMEOUT_TIER])
 
         sessions = storage.load_sessions()
-        claude_session_id = sessions.get(token, {}).get("claude_session_id")
-        result, error = claude_daemon.run_claude(message, session_id=claude_session_id, timeout=timeout_secs)
-        if error == "timeout":
-            self._send_json(504, {"error": "claude timed out"})
-            return
-        if error:
-            self._send_json(500, {"error": f"claude error: {error}"})
-            return
+        session_entry = sessions.get(token, {})
+        job_id = chat_jobs.start_job(
+            token, message, session_entry.get("claude_session_id"),
+            session_entry.get("claude_session_owner"), timeout_secs)
+        # Returns immediately with a job id instead of blocking on the reply --
+        # see chat_jobs.py for why (proxy timeouts well under the longer
+        # TIMEOUT_TIERS). The page polls /api/chat/status for the result.
+        self._send_json(200, {"job_id": job_id})
 
-        new_session_id = result.get("session_id")
-        if new_session_id:
-            sessions.setdefault(token, {})["claude_session_id"] = new_session_id
-            storage.save_sessions(sessions)
-
-        self._send_json(200, {"reply": result.get("result", "")})
+    def _handle_chat_status(self, query):
+        token = self._authed()
+        if not token:
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        job_id = (query.get("job_id") or [""])[0]
+        job = chat_jobs.get_job(job_id, token)
+        if job is None:
+            self._send_json(404, {"error": "job not found"})
+            return
+        if job["status"] == "running":
+            self._send_json(200, {"status": "running"})
+        elif job["status"] == "error":
+            self._send_json(200, {"status": "error", "error": job["error"]})
+        else:
+            self._send_json(200, {"status": "done", "reply": job["reply"]})
 
 
 class TLSThreadingHTTPServer(ThreadingHTTPServer):

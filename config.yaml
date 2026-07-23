@@ -1,0 +1,49 @@
+# Operator-facing feature flags and static config, human-edited.
+#
+# This is the ONE place every non-secret configuration knob in this app
+# lives -- core/settings.py reads through core/config.py to build its
+# constants instead of each module reading its own `os.environ.get(...)`.
+#
+# Secrets do NOT belong here: this file is git-tracked. VPS/GitHub
+# credentials stay in the separate file pointed to by daemon_env_file below,
+# read only by daemon/claude_daemon.py's load_daemon_env() straight into a
+# subprocess environment -- this file never sees their contents.
+#
+# Runtime state (password hash, chat sessions) also doesn't belong here --
+# that's app-written JSON in var/state/, see core/storage.py.
+#
+# Reloaded from disk on every read (core/config.py doesn't cache it), so
+# edits here take effect on the next request -- no restart needed.
+
+# SCRUM-13: whether a chat-triggered GitHub PR review (web/github_review.py)
+# is offered at all -- i.e. whether pasting a github.com PR/MR URL in chat
+# triggers a review. Does NOT control live posting vs. dry-run; that's the
+# separate github_review_comment below.
+github_review: yes
+
+# Whether that PR review actually posts its comment (under the UsatovAI
+# GitHub identity) to the PR, versus only building the request and reporting
+# what it would have sent.
+github_review_comment: yes
+
+# TLS / networking
+cert_domain: 144-124-226-50.sslip.io
+port: null   # null = auto (443 if a TLS cert for cert_domain exists, else 8080)
+
+# The Linux user the `claude` CLI runs as for unattended work (chat replies,
+# night mode) so it can pass --dangerously-skip-permissions -- root is
+# refused that flag by the CLI itself.
+daemon_user: claudeweb
+
+# Path to the *secrets* file (VPS/GitHub credentials, read by
+# daemon/claude_daemon.py's load_daemon_env()) -- a path reference only; the
+# secrets it points to must never be copied into this file.
+daemon_env_file: /root/env/.env
+
+# ~8h autonomous night-mode loop (daemon/night_mode.py): total wall-clock
+# budget, the longest any single `claude -p` call within it may run, and the
+# minimum session length its Stop hook enforces on the executor role so it
+# can't bail after a token effort.
+night_mode_budget_secs: 28800   # 8h
+night_mode_max_call_secs: 3600
+night_min_session_secs: 600
