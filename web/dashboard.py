@@ -99,6 +99,33 @@ def latest_totals(daemon_user):
     return collect_once(daemon_user)
 
 
+def window_totals(history, window_secs):
+    """Tokens used in the trailing `window_secs` window, derived by diffing the
+    latest cumulative sample against the last sample at or before the window
+    start. `history` entries hold all-time cumulative counts, so a straight
+    "total vs limit" comparison would only ever climb and eventually latch
+    over 100% -- a rolling window is what actually matches how Claude's usage
+    limits reset."""
+    keys = ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")
+    if not history:
+        return {k: 0 for k in keys}
+    latest = history[-1]
+    threshold = latest["ts"] - window_secs
+    baseline = history[0]
+    for entry in history:
+        if entry["ts"] <= threshold:
+            baseline = entry
+        else:
+            break
+    return {k: max(0, latest.get(k, 0) - baseline.get(k, 0)) for k in keys}
+
+
+def window_start_ts(history, window_secs):
+    if not history:
+        return None
+    return history[-1]["ts"] - window_secs
+
+
 def collector_loop(daemon_user, stop_event):
     while not stop_event.is_set():
         try:
