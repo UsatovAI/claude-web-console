@@ -22,6 +22,10 @@ from core import settings
 
 DAEMON_HOME = f"/home/{settings.DAEMON_USER}"
 CLAUDE_BIN = f"{DAEMON_HOME}/.local/bin/claude"
+# Credential-free (uses ${VAR} expansion, see mcp-config.json itself) --
+# reuses the same jira MCP server/credentials already registered in root's
+# own ~/.claude.json rather than a second Jira integration for claudeweb.
+MCP_CONFIG_PATH = f"{DAEMON_HOME}/mcp-config.json"
 
 
 def load_daemon_env(path=settings.ENV_FILE_PATH):
@@ -79,6 +83,8 @@ def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
         cmd += ["--resume", session_id]
     if extra_args:
         cmd += extra_args
+    if as_daemon_user and os.path.exists(MCP_CONFIG_PATH):
+        cmd += ["--mcp-config", MCP_CONFIG_PATH]
     run_kwargs = dict(input=prompt, capture_output=True, text=True, timeout=timeout)
     if as_daemon_user:
         run_kwargs["cwd"] = cwd or DAEMON_HOME

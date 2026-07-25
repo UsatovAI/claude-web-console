@@ -14,11 +14,34 @@ def load(path):
         return json.load(f)
 
 
+def _passing_ids(data):
+    return {f["id"] for f in data.get("features", []) if f.get("status") == "passing"}
+
+
+def _deps_satisfied(feat, passing_ids):
+    return all(dep in passing_ids for dep in feat.get("depends_on") or [])
+
+
 def next_pending(data):
+    """First pending feature whose depends_on ids (if any) are all already
+    passing -- a feature blocked on an unfinished dependency is skipped, not
+    picked out of order (SCRUM-10's depends_on requirement)."""
+    passing_ids = _passing_ids(data)
     for feat in data.get("features", []):
-        if feat.get("status") == "pending":
+        if feat.get("status") == "pending" and _deps_satisfied(feat, passing_ids):
             return feat
     return None
+
+
+def has_blocked_pending(data):
+    """True if there's pending work that next_pending won't return because
+    its dependencies aren't satisfied yet -- distinguishes "genuinely nothing
+    left to do" from "stuck waiting on a dependency" for clearer logging."""
+    passing_ids = _passing_ids(data)
+    return any(
+        feat.get("status") == "pending" and not _deps_satisfied(feat, passing_ids)
+        for feat in data.get("features", [])
+    )
 
 
 def next_implemented(data):

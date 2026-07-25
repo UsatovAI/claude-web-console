@@ -5,7 +5,7 @@ call.
 This exists because any proxy in front of this server enforces its own
 connection timeout well under this app's own TIMEOUT_TIERS -- e.g.
 Cloudflare's ~100s default edge-to-origin timeout on Free/Pro/Business plans,
-which is silently far shorter than every one of the 5m/15m/1h tiers users
+which is silently far shorter than every one of the 5m/15m/30m tiers users
 can pick in the UI. A single request/response cycle can't reliably survive
 a multi-minute wait no matter what this app itself allows, regardless of the
 exact proxy timeout value in front of it at any given time. Polling a
@@ -27,6 +27,51 @@ _jobs = {}  # job_id -> {"status", "token", "created", ["reply"|"error"]}
 
 _PRUNE_AFTER_SECS = 900
 
+# SCRUM-11/SCRUM-23: a min-duration *Stop hook* (the original approach here)
+# does not work -- verified empirically by driving a real claudeweb session
+# with actual tool use under --dangerously-skip-permissions and confirming
+# its hook script was never invoked. `claude -p` (headless print mode) does
+# not go through the interactive Stop-hook checkpoint at all, tool use or
+# not. So the floor is enforced here instead: after the first reply, keep
+# resuming the same session with a "keep working" prompt until timeout_secs
+# have actually elapsed. Capped at _MAX_MIN_DURATION_TURNS follow-ups so a
+# fast-replying loop can't run away.
+_MAX_MIN_DURATION_TURNS = 20
+
+_KEEP_WORKING_PROMPT = (
+    "This conversation is set to a minimum working time of {label} and {remaining}s of "
+    "that floor remain. Keep working on the user's request: double-check your answer, "
+    "consider edge cases or alternative interpretations, improve the explanation, or "
+    "verify claims -- don't just wait idly. If you believe the reply is actually "
+    "complete, validate that against the user's original question before stopping (does "
+    "it really satisfy what they asked?) rather than just asserting it's done. If you "
+    "decide you need a tool you don't currently have (gh, an MCP server, etc.), install "
+    "or configure it now instead of stopping without it."
+)
+
+
+def _duration_label(secs):
+    if secs % 3600 == 0:
+        return f"{secs // 3600}h"
+    if secs % 60 == 0:
+        return f"{secs // 60}m"
+    return f"{secs}s"
+
+
+def _run_with_min_duration(message, session_id, session_owner, floor_secs, call_timeout):
+    t0 = time.time()
+    result, error, owner = claude_daemon.run_claude(
+        message, session_id=session_id, session_owner=session_owner, timeout=call_timeout)
+    turns = 0
+    while not error and turns < _MAX_MIN_DURATION_TURNS and time.time() - t0 < floor_secs:
+        remaining = int(floor_secs - (time.time() - t0))
+        prompt = _KEEP_WORKING_PROMPT.format(label=_duration_label(floor_secs), remaining=remaining)
+        resume_id = result.get("session_id") or session_id
+        result, error, owner = claude_daemon.run_claude(
+            prompt, session_id=resume_id, session_owner=owner, timeout=call_timeout)
+        turns += 1
+    return result, error, owner
+
 
 def _prune_locked():
     cutoff = time.time() - _PRUNE_AFTER_SECS
@@ -35,15 +80,22 @@ def _prune_locked():
         del _jobs[jid]
 
 
-def start_job(token, message, session_id, session_owner, timeout_secs):
+def start_job(token, message, session_id, session_owner, timeout_secs, apply_min_hook=True):
     job_id = uuid.uuid4().hex
     with _lock:
         _prune_locked()
         _jobs[job_id] = {"status": "running", "token": token, "created": time.time()}
 
     def worker():
-        result, error, owner_used = claude_daemon.run_claude(
-            message, session_id=session_id, session_owner=session_owner, timeout=timeout_secs)
+        # apply_min_hook=False (the "-" tier) skips the floor entirely: no
+        # re-prompting, no extra instructions injected, just the plain
+        # capped call.
+        if apply_min_hook:
+            result, error, owner_used = _run_with_min_duration(
+                message, session_id, session_owner, timeout_secs, timeout_secs)
+        else:
+            result, error, owner_used = claude_daemon.run_claude(
+                message, session_id=session_id, session_owner=session_owner, timeout=timeout_secs)
 
         if error:
             with _lock:
