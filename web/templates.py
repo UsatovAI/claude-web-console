@@ -48,10 +48,11 @@ button:disabled{{opacity:.5}}
 </header>
 <div id="log"></div>
 <form id="f">
-<select id="timeout" title="Max time to let this question run">
+<select id="timeout" title="Minimum + max time to let this question run; - skips the minimum floor entirely">
+<option value="-">-</option>
 <option value="5m">5m</option>
 <option value="15m">15m</option>
-<option value="1h">1h</option>
+<option value="30m">30m</option>
 </select>
 <input id="i" autocomplete="off" placeholder="Message..." autofocus><button id="b">Send</button></form>
 <script>
@@ -120,6 +121,22 @@ sessionPicker.addEventListener('change', async () => {{
     }}
   }}
 }})();
+// night_mode.py runs as a detached background process with no connection
+// back to this tab, so QA-round summaries (see /night, /night_deep) can
+// only reach the chat log by polling -- same shape as the /api/chat/status
+// poll above, just on a slower interval and running continuously rather
+// than only while a single reply is in flight, since a night run can take
+// up to 8h across many rounds.
+let nightSince = 0;
+async function pollNightSummaries() {{
+  const res = await fetch('/api/night/summary?since=' + nightSince);
+  if (res.status === 401) return;
+  const data = await res.json();
+  nightSince = data.since;
+  for (const s of (data.summaries || [])) add(s.text, 'bot');
+}}
+pollNightSummaries();
+setInterval(pollNightSummaries, 5000);
 form.addEventListener('submit', async (e) => {{
   e.preventDefault();
   const text = input.value.trim();
@@ -141,7 +158,7 @@ form.addEventListener('submit', async (e) => {{
       // Long-running replies run off-thread server-side and get polled for,
       // instead of one HTTP request staying open for the whole wait -- a
       // proxy in front of this server can close a connection well before
-      // this app's own 5m/15m/1h tiers would.
+      // this app's own 5m/15m/30m tiers would.
       while (true) {{
         await new Promise(r => setTimeout(r, 2000));
         const sres = await fetch('/api/chat/status?job_id=' + encodeURIComponent(data.job_id));

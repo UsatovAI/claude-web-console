@@ -20,6 +20,10 @@ LOG_DIR = os.path.join(VAR_DIR, "log")
 
 CONFIG_PATH = os.path.join(STATE_DIR, "config.json")
 SESSIONS_PATH = os.path.join(STATE_DIR, "sessions.json")
+# SCRUM-10: per-round QA summaries night_mode.py appends to, so the web
+# console can push them into chat instead of the user having to poll
+# /night status -- see core/storage.py's append_night_summary/night_summaries_since.
+NIGHT_SUMMARIES_PATH = os.path.join(STATE_DIR, "night_summaries.json")
 
 # Human-edited feature flags/static config -- see core/config.py. Separate
 # from CONFIG_PATH above, which is this app's own runtime state (JSON,
@@ -45,8 +49,17 @@ ENV_FILE_PATH = config.get("daemon_env_file")
 LOGIN_WINDOW_SECS = 300
 LOGIN_MAX_ATTEMPTS = 5
 
-TIMEOUT_TIERS = {"5m": 300, "15m": 900, "1h": 3600}
+TIMEOUT_TIERS = {"5m": 300, "15m": 900, "30m": 1800}
 DEFAULT_TIMEOUT_TIER = "5m"
+
+# SCRUM-11: "-" skips the min-duration floor entirely, so Claude replies as
+# soon as it's actually done instead of being held to a floor and fed the
+# extra "keep working / validate completeness / install missing tools"
+# instructions (web/chat_jobs.py's _run_with_min_duration) -- same cap as
+# the default tier, just no floor.
+NO_MIN_TIER = "-"
+MIN_DURATION_TIERS = TIMEOUT_TIERS
+ALL_TIMEOUT_TIERS = {**MIN_DURATION_TIERS, NO_MIN_TIER: TIMEOUT_TIERS[DEFAULT_TIMEOUT_TIER]}
 
 # Token budget is tracked as a rolling window, not an all-time total, since
 # Claude's own usage limits reset on a rolling basis rather than accumulating forever.

@@ -57,6 +57,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_session_messages(parse_qs(urlparse(self.path).query))
         elif path == "/api/chat/status":
             self._handle_chat_status(parse_qs(urlparse(self.path).query))
+        elif path == "/api/night/summary":
+            self._handle_night_summary(parse_qs(urlparse(self.path).query))
         else:
             self._send(404, "not found")
 
@@ -192,8 +194,13 @@ class Handler(BaseHTTPRequestHandler):
         if not message:
             self._send_json(400, {"error": "empty message"})
             return
+        if message.lower() == "/night_deep" or message.lower().startswith("/night_deep "):
+            reply = night_control.handle_command(
+                message[len("/night_deep"):].strip(), force_deep_research=True, token=token)
+            self._send_json(200, {"reply": reply})
+            return
         if message.lower() == "/night" or message.lower().startswith("/night "):
-            reply = night_control.handle_command(message[len("/night"):].strip())
+            reply = night_control.handle_command(message[len("/night"):].strip(), token=token)
             self._send_json(200, {"reply": reply})
             return
 
@@ -215,14 +222,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"job_id": job_id})
             return
 
-        timeout_secs = settings.TIMEOUT_TIERS.get(
+        timeout_secs = settings.ALL_TIMEOUT_TIERS.get(
             data.get("timeout"), settings.TIMEOUT_TIERS[settings.DEFAULT_TIMEOUT_TIER])
+        # SCRUM-11: every tier except "-" holds the reply to timeout_secs as a
+        # minimum, not just a cap -- see chat_jobs.start_job/_run_with_min_duration.
+        apply_min_hook = data.get("timeout") != settings.NO_MIN_TIER
 
         sessions = storage.load_sessions()
         session_entry = sessions.get(token, {})
         job_id = chat_jobs.start_job(
             token, message, session_entry.get("claude_session_id"),
-            session_entry.get("claude_session_owner"), timeout_secs)
+            session_entry.get("claude_session_owner"), timeout_secs, apply_min_hook=apply_min_hook)
         # Returns immediately with a job id instead of blocking on the reply --
         # see chat_jobs.py for why (proxy timeouts well under the longer
         # TIMEOUT_TIERS). The page polls /api/chat/status for the result.
@@ -244,6 +254,27 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "error", "error": job["error"]})
         else:
             self._send_json(200, {"status": "done", "reply": job["reply"]})
+
+    def _handle_night_summary(self, query):
+        """SCRUM-10: night_mode.py runs as a detached background process with
+        no connection back to any open browser tab, so QA-round summaries it
+        writes (core.storage.append_night_summary) can only reach the chat
+        UI via polling, same pattern as /api/chat/status. `since` is the
+        count of summaries this client has already seen; the response's
+        `since` is what to pass next time."""
+        token = self._authed()
+        if not token:
+            self._send_json(401, {"error": "not authenticated"})
+            return
+        try:
+            since = int((query.get("since") or ["0"])[0])
+        except ValueError:
+            since = 0
+        new_summaries, next_since = storage.night_summaries_since(token, since)
+        self._send_json(200, {
+            "summaries": [{"text": s["text"], "ts": s["ts"]} for s in new_summaries],
+            "since": next_since,
+        })
 
 
 class TLSThreadingHTTPServer(ThreadingHTTPServer):
