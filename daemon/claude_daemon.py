@@ -58,7 +58,7 @@ def load_daemon_env(path=settings.ENV_FILE_PATH):
     return env
 
 
-_AUTH_FAILURE_MARKERS = ("oauth", "authenticate", "credentials", "session expired")
+_AUTH_FAILURE_MARKERS = ("oauth", "authenticate", "credentials", "session expired", "not logged in")
 # Kept as a safety net even after switching claudeweb to API-key auth: it still
 # catches a revoked/invalid/misconfigured ANTHROPIC_API_KEY (and covers any
 # deployment that hasn't set one yet and is still running on a raw OAuth
