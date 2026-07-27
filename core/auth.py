@@ -34,12 +34,22 @@ def cookie_token(cookie_header):
 
 
 def authed_token(cookie_header):
-    """Return the session token if the cookie names a live session, else None."""
+    """Return the session token if the cookie names a live, unexpired session,
+    else None. Expiry is enforced here (not just via the cookie's own
+    Max-Age) so a copied/replayed token stops working past its age even if
+    the client that stole it ignores or strips Max-Age."""
     token = cookie_token(cookie_header)
     if not token:
         return None
     sessions = storage.load_sessions()
-    return token if token in sessions else None
+    session = sessions.get(token)
+    if not session:
+        return None
+    if time.time() - session.get("created", 0) > settings.SESSION_MAX_AGE_SECS:
+        del sessions[token]
+        storage.save_sessions(sessions)
+        return None
+    return token
 
 
 def rate_limited(ip):
