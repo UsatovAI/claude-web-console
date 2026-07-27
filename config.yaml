@@ -26,13 +26,10 @@ github_review: yes
 # what it would have sent.
 github_review_comment: yes
 
-# TLS / networking
-#
-# bootstrap.sh keeps this in sync with the domain it actually requests a
-# cert for on every run -- don't hand-edit to a value that doesn't match a
-# real issued cert, or USE_TLS silently falls back to plain HTTP on 8080.
-cert_domain: CHANGEME.sslip.io
-port: null   # null = auto (443 if a TLS cert for cert_domain exists, else 8080)
+# Networking. The TLS domain itself isn't configured here -- bootstrap.sh
+# passes it straight to the service as the CERT_DOMAIN env var, since it's
+# the thing that actually knows what domain it requested a cert for.
+port: null   # null = auto (443 if a TLS cert for CERT_DOMAIN exists, else 8080)
 
 # The Linux user the `claude` CLI runs as for unattended work (chat replies,
 # night mode) so it can pass --dangerously-skip-permissions -- root is

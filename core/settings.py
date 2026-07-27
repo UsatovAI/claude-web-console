@@ -30,7 +30,10 @@ NIGHT_SUMMARIES_PATH = os.path.join(STATE_DIR, "night_summaries.json")
 # written by the app, not hand-edited).
 YAML_CONFIG_PATH = config.YAML_CONFIG_PATH
 
-CERT_DOMAIN = config.get("cert_domain")
+# Set by bootstrap.sh in the systemd unit's Environment= (it already knows
+# the actual domain it requested a cert for) -- not config.yaml, which would
+# need to be kept in sync by hand and has drifted to a stale value before.
+CERT_DOMAIN = os.environ.get("CERT_DOMAIN", "localhost")
 CERT_PATH = f"/etc/letsencrypt/live/{CERT_DOMAIN}/fullchain.pem"
 KEY_PATH = f"/etc/letsencrypt/live/{CERT_DOMAIN}/privkey.pem"
 USE_TLS = os.path.exists(CERT_PATH) and os.path.exists(KEY_PATH)
