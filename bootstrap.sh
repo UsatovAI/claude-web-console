@@ -110,7 +110,13 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 
 ProtectSystem=strict
-ProtectHome=true
+# Not ProtectHome=true: that makes /home itself untraversable (mode 000),
+# which blocks reaching /home/$DAEMON_USER even though ReadWritePaths
+# names it explicitly -- found by a child `claude` subprocess failing to
+# chdir into its own daemon user's home with a misleading PermissionError.
+# read-only keeps /home traversable/readable; ReadWritePaths below still
+# upgrades the daemon user's own home to read-write.
+ProtectHome=read-only
 ReadWritePaths=$DIR/var /home/$DAEMON_USER
 PrivateTmp=true
 ProtectKernelTunables=true
