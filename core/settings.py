@@ -49,6 +49,11 @@ ENV_FILE_PATH = config.get("daemon_env_file")
 LOGIN_WINDOW_SECS = 300
 LOGIN_MAX_ATTEMPTS = 5
 
+# How long a session cookie stays valid, enforced server-side (not just as
+# the cookie's own Max-Age, which a client could ignore/replay past expiry
+# if this weren't also checked in core/auth.py's authed_token()).
+SESSION_MAX_AGE_SECS = int(config.get("session_max_age_secs"))
+
 TIMEOUT_TIERS = {"5m": 300, "15m": 900, "30m": 1800}
 DEFAULT_TIMEOUT_TIER = "5m"
 

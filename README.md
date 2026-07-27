@@ -25,26 +25,40 @@ Installs certbot, requests a cert for `<ip-with-dashes>.sslip.io` (or `$DOMAIN` 
 
 `config.json` and `sessions.json` hold local secrets/state and are gitignored — never commit them.
 
-## Current known limitation: root-privileged daemon
+## Privilege model: runs entirely as a non-root user
 
-The deployed daemon currently runs as **root** and calls `claude -p` with
-`--dangerously-skip-permissions` so it can act (edit files, run shell commands) without an
-interactive approval prompt (there's no TTY on a background web request).
+Both the web server itself and the `claude -p --dangerously-skip-permissions` calls it makes run
+as an unprivileged system user (`daemon_user` in `config.yaml`, default `claudeweb`) — not root.
+`bootstrap.sh` creates that user with no sudo rights and no privileged group membership, and the
+systemd unit runs the whole process as it, granted only `CAP_NET_BIND_SERVICE` (so it can still
+bind port 443 without being root) plus standard systemd sandboxing
+(`ProtectSystem=strict`, `ProtectHome`, `NoNewPrivileges`, `PrivateTmp`, restricted capability set).
 
-The Claude Code CLI refuses to combine `--dangerously-skip-permissions` with root/sudo — by
-design, as a safeguard against exactly this shape of setup. The correct fix is to run the whole
-service as a dedicated **non-root** system user (e.g. `claudeweb`) with its own copy of the Claude
-Code credentials, so the daemon can act without prompts but is capped at that user's own
-permissions instead of full root. That migration is not done yet — creating the system user was
-blocked by the Claude Code host's own safety classifier when attempted from within a session, and
-needs to be done with explicit operator sign-off (see the running conversation for the exact
-commands: `useradd claudeweb`, copy `~/.claude/.credentials.json`, move this directory somewhere
-`claudeweb` can read, then drop privileges in `app.py` after the TLS cert is loaded and the socket
-is bound to port 443, before serving requests).
+This matters even on a single-purpose VPS with nothing else on it: root vs. a properly-sandboxed
+non-root user isn't about protecting other tenants here, it's about **recoverability**. Root could
+rewrite `authorized_keys`, disable `sshd`, flush firewall rules, or otherwise lock out the operator
+if the daemon misbehaves or the login credential leaks; a no-sudo, no-privileged-group user cannot
+do any of that — however badly it acts, there's always a way back in from outside it.
 
-Until that migration happens, treat this deployment as **root-equivalent remote code execution
-gated by a single password** — keep the password strong, don't share the URL, and be aware that
-compromise of the password compromises the whole server.
+What this does *not* remove: `--dangerously-skip-permissions` still means no per-action
+confirmation for whatever `daemon_user` itself can touch, and the `/night` autonomous loop still
+runs unattended for hours with no human review in between. Both are accepted, scoped tradeoffs of
+this design, not fixed by the privilege drop — treat this deployment as **remote code execution,
+scoped to the daemon user's own permissions, gated by a single password** (see "Session lifetime"
+below for how long that password's session lasts once entered).
+
+The daemon user needs its own Claude Code login (never copy another account's
+`~/.claude/.credentials.json` onto this box) — run once, interactively, after bootstrap:
+
+```bash
+su - claudeweb -c 'claude setup-token'
+```
+
+## Session lifetime
+
+A logged-in session is valid for `session_max_age_secs` in `config.yaml` (default 7 days), enforced
+server-side in `core/auth.py` — not just as the cookie's own `Max-Age`, so a copied/replayed
+session token stops working once it ages out even if the client holding it ignores expiry.
 
 ## Dashboard
 

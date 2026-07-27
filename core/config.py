@@ -33,10 +33,11 @@ _DEFAULTS = {
     "cert_domain": "144-124-226-50.sslip.io",
     "port": None,  # None = auto: 443 if a TLS cert for cert_domain exists, else 8080
     "daemon_user": "claudeweb",
-    "daemon_env_file": "/root/env/.env",
+    "daemon_env_file": "/home/claudeweb/env/.env",
     "night_mode_budget_secs": 8 * 3600,
     "night_mode_max_call_secs": 3600,
     "night_min_session_secs": 600,
+    "session_max_age_secs": 7 * 24 * 3600,
 }
 
 

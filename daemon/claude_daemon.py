@@ -16,12 +16,18 @@ subscription, not API billing.
 """
 import json
 import os
+import shutil
 import subprocess
 
 from core import settings
 
 DAEMON_HOME = f"/home/{settings.DAEMON_USER}"
-CLAUDE_BIN = f"{DAEMON_HOME}/.local/bin/claude"
+_PER_USER_CLAUDE_BIN = f"{DAEMON_HOME}/.local/bin/claude"
+# Prefer a per-user install if claudeweb has one, else fall back to whatever
+# `claude` resolves to on PATH (e.g. a system-wide npm -g install shared by
+# all users) -- avoids requiring a redundant second CLI install just for
+# this one account.
+CLAUDE_BIN = _PER_USER_CLAUDE_BIN if os.path.exists(_PER_USER_CLAUDE_BIN) else (shutil.which("claude") or "claude")
 # Credential-free (uses ${VAR} expansion, see mcp-config.json itself) --
 # reuses the same jira MCP server/credentials already registered in root's
 # own ~/.claude.json rather than a second Jira integration for claudeweb.
@@ -29,8 +35,11 @@ MCP_CONFIG_PATH = f"{DAEMON_HOME}/mcp-config.json"
 
 
 def load_daemon_env(path=settings.ENV_FILE_PATH):
-    """Parse a simple KEY=VALUE .env file. Read as root so the values can be
-    handed to the daemon subprocess without that file being readable by it."""
+    """Parse a simple KEY=VALUE .env file, owned by and readable only by the
+    daemon user itself (the whole app runs as that unprivileged user now --
+    see bootstrap.sh -- so there's no longer a root/subprocess privilege
+    split to defend across; the file just needs mode 600 against other
+    unrelated users on the box)."""
     env = {}
     try:
         with open(path) as f:

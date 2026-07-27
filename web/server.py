@@ -176,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         cookie_attrs = "; Secure" if settings.USE_TLS else ""
         self._send(303, "", headers={
             "Location": "/",
-            "Set-Cookie": f"session={token}; HttpOnly; SameSite=Strict; Max-Age=31536000; Path=/{cookie_attrs}",
+            "Set-Cookie": f"session={token}; HttpOnly; SameSite=Strict; Max-Age={settings.SESSION_MAX_AGE_SECS}; Path=/{cookie_attrs}",
         })
 
     def _handle_chat(self):

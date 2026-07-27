@@ -38,7 +38,10 @@ daemon_user: claudeweb
 # Path to the *secrets* file (VPS/GitHub credentials, read by
 # daemon/claude_daemon.py's load_daemon_env()) -- a path reference only; the
 # secrets it points to must never be copied into this file.
-daemon_env_file: /root/env/.env
+#
+# Owned by daemon_user (mode 600) since the whole app now runs as that user,
+# not root -- see bootstrap.sh, which creates the containing directory.
+daemon_env_file: /home/claudeweb/env/.env
 
 # ~8h autonomous night-mode loop (daemon/night_mode.py): total wall-clock
 # budget, the longest any single `claude -p` call within it may run, and the
@@ -47,3 +50,9 @@ daemon_env_file: /root/env/.env
 night_mode_budget_secs: 28800   # 8h
 night_mode_max_call_secs: 3600
 night_min_session_secs: 600
+
+# How long a login stays valid before re-entering the password is required
+# again, enforced server-side in core/auth.py's authed_token() (not just as
+# the cookie's own Max-Age -- a stolen/copied session token is only usable
+# for this long, not indefinitely).
+session_max_age_secs: 604800   # 7d
