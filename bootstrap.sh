@@ -68,6 +68,11 @@ fi
 
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   echo "==> granting $DAEMON_USER read access to the cert via ACL (not chown -- stays root-owned)"
+  # /etc/letsencrypt/{live,archive} are mode 700 -- traversal needs execute
+  # on every path component, not just the leaf directory, so grant --x
+  # (not rX: that would let claudeweb list every other domain's cert on
+  # this box, not just reach the one it needs) on the parents too.
+  setfacl -m "u:$DAEMON_USER:--x" /etc/letsencrypt/live /etc/letsencrypt/archive
   setfacl -R -m "u:$DAEMON_USER:rX" "/etc/letsencrypt/live/$DOMAIN" "/etc/letsencrypt/archive/$DOMAIN"
   setfacl -R -m "d:u:$DAEMON_USER:rX" "/etc/letsencrypt/archive/$DOMAIN"
   # Certbot recreates archive/ files on every renewal, which drops the ACL
@@ -76,6 +81,7 @@ if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   mkdir -p /etc/letsencrypt/renewal-hooks/deploy
   cat > /etc/letsencrypt/renewal-hooks/deploy/claude-web-acl.sh <<EOF
 #!/bin/sh
+setfacl -m u:$DAEMON_USER:--x /etc/letsencrypt/live /etc/letsencrypt/archive
 setfacl -R -m u:$DAEMON_USER:rX "/etc/letsencrypt/live/$DOMAIN" "/etc/letsencrypt/archive/$DOMAIN"
 EOF
   chmod +x /etc/letsencrypt/renewal-hooks/deploy/claude-web-acl.sh
