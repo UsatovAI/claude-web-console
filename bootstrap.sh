@@ -17,31 +17,6 @@ DAEMON_USER="$(python3 -c "import sys; sys.path.insert(0,'$DIR'); from core impo
 echo "==> domain: $DOMAIN"
 echo "==> daemon user: $DAEMON_USER"
 
-# config.yaml's cert_domain must match the domain we actually request a cert
-# for, or core/settings.py's USE_TLS check looks for the cert under the
-# wrong path, finds nothing, and silently falls back to plain HTTP on 8080
-# -- found exactly this happening from a stale cert_domain left over from a
-# different VPS. Keep them in sync on every bootstrap run, not just the
-# first one, in case DOMAIN/IP changed since.
-python3 - <<PY
-import sys
-sys.path.insert(0, "$DIR")
-import yaml
-path = "$DIR/config.yaml"
-with open(path) as f:
-    text = f.read()
-data = yaml.safe_load(text) or {}
-if data.get("cert_domain") != "$DOMAIN":
-    import re
-    if re.search(r"^cert_domain:.*$", text, re.MULTILINE):
-        text = re.sub(r"^cert_domain:.*$", "cert_domain: $DOMAIN", text, flags=re.MULTILINE)
-    else:
-        text += "\ncert_domain: $DOMAIN\n"
-    with open(path, "w") as f:
-        f.write(text)
-    print("==> updated config.yaml cert_domain -> $DOMAIN")
-PY
-
 apt-get update -y
 apt-get install -y python3 python3-yaml certbot acl
 
@@ -141,7 +116,11 @@ RestrictSUIDSGID=true
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now claude-web
+systemctl enable claude-web
+# restart, not start -- this script is re-run on redeploys, and `start` on
+# an already-running unit is a no-op that leaves the old process (old code,
+# old env vars) running instead of picking up what this run just changed.
+systemctl restart claude-web
 
 echo "==> done. Listening on https://$DOMAIN/"
 echo "==> NOTE: for tool use (--dangerously-skip-permissions) the daemon"
