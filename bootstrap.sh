@@ -56,7 +56,14 @@ chmod 600 "$DIR/var/state/config.json" "$DIR/var/state/sessions.json"
 
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
   echo "==> requesting TLS certificate for $DOMAIN"
-  certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --no-eff-email
+  # --standalone needs port 80 for the ACME HTTP-01 challenge, which may
+  # already be held by another service on this box (e.g. a separately
+  # deployed nginx site) -- free it for just the issuance window rather
+  # than assuming this VPS is single-purpose. Same hooks apply on renewal
+  # via certbot's own systemd timer, so this isn't a one-off special case.
+  certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --no-eff-email \
+    --pre-hook "systemctl stop nginx 2>/dev/null || true" \
+    --post-hook "systemctl start nginx 2>/dev/null || true"
 fi
 
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
