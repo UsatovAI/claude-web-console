@@ -30,7 +30,7 @@ YAML_CONFIG_PATH = os.path.join(_BASE_DIR, "config.yaml")
 _DEFAULTS = {
     "github_review": False,
     "github_review_comment": False,
-    "cert_domain": "144-124-226-50.sslip.io",
+    "cert_domain": "CHANGEME.sslip.io",  # bootstrap.sh overwrites this in config.yaml on every run
     "port": None,  # None = auto: 443 if a TLS cert for cert_domain exists, else 8080
     "daemon_user": "claudeweb",
     "daemon_env_file": "/home/claudeweb/env/.env",

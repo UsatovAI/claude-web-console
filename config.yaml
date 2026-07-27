@@ -27,7 +27,11 @@ github_review: yes
 github_review_comment: yes
 
 # TLS / networking
-cert_domain: 144-124-226-50.sslip.io
+#
+# bootstrap.sh keeps this in sync with the domain it actually requests a
+# cert for on every run -- don't hand-edit to a value that doesn't match a
+# real issued cert, or USE_TLS silently falls back to plain HTTP on 8080.
+cert_domain: CHANGEME.sslip.io
 port: null   # null = auto (443 if a TLS cert for cert_domain exists, else 8080)
 
 # The Linux user the `claude` CLI runs as for unattended work (chat replies,
