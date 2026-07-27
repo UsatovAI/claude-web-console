@@ -72,10 +72,12 @@ def _looks_like_auth_failure(error_text):
 
 
 def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
-    """One subprocess invocation, either dropped to the unprivileged daemon
-    user (with --dangerously-skip-permissions, so it can act unattended) or
-    run as root (no skip-permissions -- the CLI refuses that combination --
-    so it can only reply conversationally, not use tools).
+    """One subprocess invocation. Both branches run as the same unprivileged
+    daemon user (the whole app does, see bootstrap.sh) -- the distinction is
+    only whether --dangerously-skip-permissions is passed: with it (using
+    the daemon user's own Claude Code login and MCP config, cwd'd to its
+    home) the CLI can use tools unattended; without it, invoked with no
+    special env/cwd, it can only reply conversationally.
 
     `prompt` is piped over stdin rather than passed as a CLI argument (`claude
     -p` reads it from stdin when no positional prompt is given): the kernel
@@ -97,7 +99,14 @@ def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
     run_kwargs = dict(input=prompt, capture_output=True, text=True, timeout=timeout)
     if as_daemon_user:
         run_kwargs["cwd"] = cwd or DAEMON_HOME
-        run_kwargs["user"] = settings.DAEMON_USER
+        # No user= here: the whole app already runs as the daemon user (see
+        # bootstrap.sh), so this used to be a redundant self-setuid -- which
+        # subprocess.run() still attempts even when uid already matches, and
+        # NoNewPrivileges=true in the systemd unit blocks that setresuid
+        # call outright, breaking every daemon-user invocation with a
+        # confusing PermissionError blamed on the cwd. If a future
+        # deployment goes back to a privileged parent process, this needs
+        # user= restored.
         run_kwargs["env"] = {**os.environ, "HOME": DAEMON_HOME, **load_daemon_env()}
     try:
         proc = subprocess.run(cmd, **run_kwargs)
@@ -133,10 +142,15 @@ def run_claude(prompt, *, session_id=None, session_owner=None, timeout, extra_ar
     started under one identity can't be --resume'd under the other (separate
     ~/.claude/projects transcripts).
 
-    Falls back to running as root (unattended tool use disabled, since the
-    CLI refuses --dangerously-skip-permissions as root) when the daemon
-    user's own auth is broken, so the chat keeps working in a degraded mode
-    instead of hard-failing while that gets fixed out of band.
+    NOTE: since the whole app now runs as the daemon user (not root -- see
+    bootstrap.sh), the "root" fallback below is no longer a genuinely
+    separate identity/credential set, just the same OS user invoked without
+    --dangerously-skip-permissions and without the daemon-home cwd/env
+    override. It still degrades gracefully (conversational reply, no tool
+    use) if the daemon user's Claude Code login is broken/expired, but it no
+    longer provides the credential isolation the original root/non-root
+    split gave it -- a broken daemon-user login now means both branches hit
+    the same underlying auth. Revisit if that isolation matters again.
     """
     owner = session_owner or "claudeweb"
     resume_id = session_id if owner == "claudeweb" else None
