@@ -16,6 +16,7 @@ thread.
 """
 import threading
 import time
+import traceback
 import uuid
 
 from core import storage
@@ -90,12 +91,31 @@ def start_job(token, message, session_id, session_owner, timeout_secs, apply_min
         # apply_min_hook=False (the "-" tier) skips the floor entirely: no
         # re-prompting, no extra instructions injected, just the plain
         # capped call.
-        if apply_min_hook:
-            result, error, owner_used = _run_with_min_duration(
-                message, session_id, session_owner, timeout_secs, timeout_secs)
-        else:
-            result, error, owner_used = claude_daemon.run_claude(
-                message, session_id=session_id, session_owner=session_owner, timeout=timeout_secs)
+        #
+        # Wrapped in try/except: this runs off the request thread (see
+        # module docstring), so an unhandled exception here doesn't fail a
+        # request -- it silently kills this thread while _jobs[job_id] stays
+        # "running" forever, and whoever's polling /api/chat/status just
+        # hangs until their own client-side timeout gives up. Seen for real:
+        # a broken claude_daemon fallback path raised PermissionError here
+        # and every affected chat message hung rather than erroring. Always
+        # resolve the job to a terminal status, even on a bug we didn't
+        # anticipate.
+        try:
+            if apply_min_hook:
+                result, error, owner_used = _run_with_min_duration(
+                    message, session_id, session_owner, timeout_secs, timeout_secs)
+            else:
+                result, error, owner_used = claude_daemon.run_claude(
+                    message, session_id=session_id, session_owner=session_owner, timeout=timeout_secs)
+        except Exception:
+            traceback.print_exc()
+            with _lock:
+                _jobs[job_id] = {
+                    "status": "error", "token": token, "created": time.time(),
+                    "error": "internal error while running claude (see server logs)",
+                }
+            return
 
         if error:
             with _lock:
@@ -137,7 +157,17 @@ def start_github_review_job(token, owner, repo, pr_number, url):
         _jobs[job_id] = {"status": "running", "token": token, "created": time.time()}
 
     def worker():
-        result, error = github_review.review_pr(owner, repo, pr_number)
+        # Same crash guard as start_job's worker -- see the comment there.
+        try:
+            result, error = github_review.review_pr(owner, repo, pr_number)
+        except Exception:
+            traceback.print_exc()
+            with _lock:
+                _jobs[job_id] = {
+                    "status": "error", "token": token, "created": time.time(),
+                    "error": "internal error during PR review (see server logs)",
+                }
+            return
 
         if error:
             with _lock:

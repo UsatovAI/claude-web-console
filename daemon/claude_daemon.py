@@ -87,7 +87,19 @@ def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
     through easily, raising OSError('Argument list too long') from execve --
     stdin has no such limit.
     """
-    cmd = [CLAUDE_BIN if as_daemon_user else "claude", "-p", "--output-format", "json"]
+    # Always CLAUDE_BIN, not a bare "claude" for the non-daemon-user branch:
+    # a bare command name relies on PATH resolution at exec time, and this
+    # process's PATH can (and on this deployment, does) contain an entry
+    # that resolves to a symlink into another user's home directory --
+    # /usr/local/bin/claude -> /root/.local/bin/claude here, unreachable by
+    # the unprivileged daemon user this whole app runs as. That's not a
+    # FileNotFoundError PATH search would gracefully continue past; execvp
+    # stops at the first EACCES, so it surfaced as an unhandled
+    # PermissionError instead of the intended graceful degraded-mode reply.
+    # CLAUDE_BIN is already resolved once at import time to something this
+    # process can actually reach, so there's no reason for this branch to
+    # re-derive a different, less reliable path.
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "json"]
     if as_daemon_user:
         cmd += ["--dangerously-skip-permissions"]
     if session_id:
