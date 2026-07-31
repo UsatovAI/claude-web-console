@@ -29,7 +29,14 @@ github_review_comment: yes
 # Networking. The TLS domain itself isn't configured here -- bootstrap.sh
 # passes it straight to the service as the CERT_DOMAIN env var, since it's
 # the thing that actually knows what domain it requested a cert for.
-port: null   # null = auto (443 if a TLS cert for CERT_DOMAIN exists, else 8080)
+#
+# Pinned to 8443 (not null/auto) as of the usatovai.ru/usatovpavel.ru VPS
+# multi-site work: nginx is now the only process on 443, routing by SNI to
+# this app's own TLS listener on 8443 (still self-terminated with its own
+# CERT_DOMAIN cert, unchanged) for the claude-web domain(s), and to a
+# separate static site on its own domain. This app's cert/ACL handling in
+# bootstrap.sh is untouched -- only the bind port moved.
+port: 8443
 
 # The Linux user the `claude` CLI runs as for unattended work (chat replies,
 # night mode) so it can pass --dangerously-skip-permissions -- root is
