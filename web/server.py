@@ -13,6 +13,19 @@ from . import chat_jobs, dashboard, github_review, templates
 class Handler(BaseHTTPRequestHandler):
     server_version = "console/1.0"
 
+    # Everything else 404s on a restricted host (fail closed, not a
+    # per-endpoint blocklist): the embedded widget only ever needs to load
+    # itself and run one chat turn. In particular /api/sessions and
+    # /api/sessions/messages are deliberately NOT here -- transcripts.list_sessions()
+    # returns every session across the whole app with no per-token
+    # filtering, so exposing them here would leak the operator's own
+    # claudeweb/root chat history to any public visitor. /dashboard and
+    # /api/stats (host resource + token-usage figures) are excluded for the
+    # same "nothing operator-internal" reason, not because either leaks
+    # session content specifically.
+    _RESTRICTED_ALLOWED_GET = {"/", "/index.html", "/api/chat/status"}
+    _RESTRICTED_ALLOWED_POST = {"/api/chat", "/api/sessions/new"}
+
     def log_message(self, fmt, *args):
         pass
 
@@ -27,6 +40,28 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").split(":")[0].lower()
         return host in settings.PUBLIC_CHAT_HOSTS
 
+    def _authed_or_anon(self):
+        """Like _authed(), but on a restricted host a visitor with no valid
+        cookie gets a brand-new anonymous session minted on the spot instead
+        of a 401/login page -- the whole point of the embedded widget is no
+        password step. Returns (token, set_cookie_header); set_cookie_header
+        is None unless a session was just minted (the caller must forward it
+        to the client or the next request starts over as a new visitor).
+        Never mints anything on a non-restricted host -- behaves exactly
+        like _authed() there."""
+        token = self._authed()
+        if token:
+            return token, None
+        if not self._is_public_restricted():
+            return None, None
+        new_token = auth.new_session_token()
+        sessions = storage.load_sessions()
+        sessions[new_token] = {"created": time.time(), "claude_session_id": None, "public": True}
+        storage.save_sessions(sessions)
+        cookie_attrs = "; Secure" if settings.USE_TLS else ""
+        cookie_header = f"session={new_token}; HttpOnly; SameSite=Strict; Max-Age={settings.SESSION_MAX_AGE_SECS}; Path=/{cookie_attrs}"
+        return new_token, cookie_header
+
     def _send(self, status, body, headers=None):
         body_b = body.encode() if isinstance(body, str) else body
         self.send_response(status)
@@ -37,18 +72,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_b)
 
-    def _send_json(self, status, obj):
+    def _send_json(self, status, obj, headers=None):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if self._is_public_restricted() and path not in self._RESTRICTED_ALLOWED_GET:
+            self._send(404, "not found")
+            return
         if path in ("/", "/index.html"):
-            if not self._authed():
+            if self._is_public_restricted():
+                token, cookie_header = self._authed_or_anon()
+                self._send(200, templates.WIDGET_PAGE.format(),
+                           headers={"Set-Cookie": cookie_header} if cookie_header else None)
+            elif not self._authed():
                 self._send(200, templates.LOGIN_PAGE.format(error=""))
             else:
                 self._send(200, templates.CHAT_PAGE.format())
@@ -118,6 +162,9 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):
+        if self._is_public_restricted() and self.path not in self._RESTRICTED_ALLOWED_POST:
+            self._send(404, "not found")
+            return
         if self.path == "/login":
             self._handle_login()
         elif self.path == "/api/chat":
@@ -151,14 +198,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"messages": messages})
 
     def _handle_new_session(self):
-        token = self._authed()
+        token, cookie_header = self._authed_or_anon()
         if not token:
             self._send_json(401, {"error": "not authenticated"})
             return
         sessions = storage.load_sessions()
         sessions.setdefault(token, {})["claude_session_id"] = None
         storage.save_sessions(sessions)
-        self._send_json(200, {"ok": True})
+        self._send_json(200, {"ok": True}, headers={"Set-Cookie": cookie_header} if cookie_header else None)
 
     def _client_ip(self):
         return self.client_address[0]
@@ -188,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _handle_chat(self):
-        token = self._authed()
+        token, cookie_header = self._authed_or_anon()
         if not token:
             self._send_json(401, {"error": "not authenticated"})
             return
@@ -210,11 +257,13 @@ class Handler(BaseHTTPRequestHandler):
         # not get, regardless of how it phrases its message -- so both are
         # refused outright here rather than reachable through a chat message
         # on this host.
+        cookie_headers = {"Set-Cookie": cookie_header} if cookie_header else None
+
         if restricted:
             lowered = message.lower()
             if lowered == "/night_deep" or lowered.startswith("/night_deep ") or \
                     lowered == "/night" or lowered.startswith("/night "):
-                self._send_json(200, {"reply": "Night mode isn't available on this endpoint."})
+                self._send_json(200, {"reply": "Night mode isn't available on this endpoint."}, headers=cookie_headers)
                 return
         else:
             if message.lower() == "/night_deep" or message.lower().startswith("/night_deep "):
@@ -263,10 +312,11 @@ class Handler(BaseHTTPRequestHandler):
         # Returns immediately with a job id instead of blocking on the reply --
         # see chat_jobs.py for why (proxy timeouts well under the longer
         # TIMEOUT_TIERS). The page polls /api/chat/status for the result.
-        self._send_json(200, {"job_id": job_id})
+        self._send_json(200, {"job_id": job_id}, headers=cookie_headers)
 
     def _handle_chat_status(self, query):
-        token = self._authed()
+        token, cookie_header = self._authed_or_anon()
+        cookie_headers = {"Set-Cookie": cookie_header} if cookie_header else None
         if not token:
             self._send_json(401, {"error": "not authenticated"})
             return
@@ -276,9 +326,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "job not found"})
             return
         if job["status"] == "running":
-            self._send_json(200, {"status": "running"})
+            self._send_json(200, {"status": "running"}, headers=cookie_headers)
         elif job["status"] == "error":
-            self._send_json(200, {"status": "error", "error": job["error"]})
+            self._send_json(200, {"status": "error", "error": job["error"]}, headers=cookie_headers)
         else:
             self._send_json(200, {"status": "done", "reply": job["reply"]})
 

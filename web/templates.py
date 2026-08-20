@@ -186,6 +186,103 @@ form.addEventListener('submit', async (e) => {{
 </script>
 </body></html>"""
 
+WIDGET_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chat</title>
+<style>
+:root{{--bg:#020617;--surface:#0F172A;--ink:#E2E8F0;--ink-2:#94A3B8;--accent:#60A5FA;--border:#334155;--terminal:#4ADE80}}
+*{{box-sizing:border-box}}
+html,body{{height:100%}}
+body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;margin:0;display:flex;flex-direction:column;font-size:.85rem}}
+header{{display:flex;align-items:center;gap:.5rem;padding:.6rem .9rem;border-bottom:1px solid var(--border);flex-shrink:0}}
+.dot{{width:.6rem;height:.6rem;border-radius:50%;background:var(--terminal)}}
+header strong{{color:var(--terminal);font-weight:700}}
+.restart{{margin-left:auto;color:var(--ink-2);text-decoration:none;font-size:.75rem;background:none;border:0;cursor:pointer;font-family:inherit}}
+.restart:hover{{color:var(--ink)}}
+#log{{flex:1;overflow-y:auto;padding:.8rem .9rem;display:flex;flex-direction:column;gap:.6rem;min-height:0}}
+.msg{{max-width:88%;padding:.5rem .7rem;border-radius:6px;white-space:pre-wrap;word-wrap:break-word;line-height:1.4}}
+.me{{align-self:flex-end;background:var(--accent);color:#02132b}}
+.bot{{align-self:flex-start;background:var(--surface);border:1px solid var(--border)}}
+.sys{{align-self:center;color:var(--ink-2);font-size:.75rem}}
+.hint{{color:var(--ink-2);font-size:.75rem;padding:0 .9rem .4rem}}
+form{{display:flex;padding:.7rem;gap:.5rem;border-top:1px solid var(--border);flex-shrink:0}}
+input{{flex:1;padding:.6rem .7rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--ink);font-family:inherit;font-size:.85rem}}
+input:focus{{outline:1px solid var(--terminal)}}
+button{{padding:.6rem 1rem;border:0;border-radius:6px;background:var(--terminal);color:#02132b;font-weight:700;cursor:pointer;font-family:inherit}}
+button:disabled{{opacity:.5;cursor:default}}
+</style></head>
+<body>
+<header><span class="dot"></span><strong>$ chat</strong><button class="restart" id="restart" type="button">restart</button></header>
+<div id="log"></div>
+<div class="hint">No tool access, cheapest model &mdash; a scoped-down demo of the same console I use for real work.</div>
+<form id="f">
+<input id="i" autocomplete="off" placeholder="Спросите что-нибудь..." autofocus><button id="b">&gt;</button>
+</form>
+<script>
+const log = document.getElementById('log');
+const form = document.getElementById('f');
+const input = document.getElementById('i');
+const btn = document.getElementById('b');
+function add(text, cls) {{
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}}
+function fmtElapsed(ms) {{
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m + ':' + String(s % 60).padStart(2, '0');
+}}
+document.getElementById('restart').addEventListener('click', async () => {{
+  await fetch('/api/sessions/new', {{method:'POST'}});
+  log.innerHTML = '';
+  input.focus();
+}});
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  add(text, 'me');
+  input.value = '';
+  btn.disabled = true;
+  const started = Date.now();
+  const waitEl = add('... (0:00)', 'sys');
+  const ticker = setInterval(() => {{
+    waitEl.textContent = '... (' + fmtElapsed(Date.now() - started) + ')';
+  }}, 1000);
+  try {{
+    const res = await fetch('/api/chat', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{message: text, timeout: '5m'}})}});
+    const data = await res.json();
+    let result;
+    if (data.job_id) {{
+      while (true) {{
+        await new Promise(r => setTimeout(r, 2000));
+        const sres = await fetch('/api/chat/status?job_id=' + encodeURIComponent(data.job_id));
+        const sdata = await sres.json();
+        if (sdata.status === 'running') continue;
+        result = sdata;
+        break;
+      }}
+    }} else {{
+      result = data;
+    }}
+    clearInterval(ticker);
+    log.removeChild(waitEl);
+    add(result.reply || result.error || '(no reply)', 'bot');
+  }} catch (err) {{
+    clearInterval(ticker);
+    log.removeChild(waitEl);
+    add('Error: ' + err, 'sys');
+  }}
+  btn.disabled = false;
+  input.focus();
+}});
+</script>
+</body></html>"""
+
 DASHBOARD_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dashboard</title>
