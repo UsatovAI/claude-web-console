@@ -37,6 +37,12 @@ _DEFAULTS = {
     "night_mode_max_call_secs": 3600,
     "night_min_session_secs": 600,
     "session_max_age_secs": 7 * 24 * 3600,
+    # Hostnames that get the restricted, no-tool-access chat path (see
+    # daemon/claude_daemon.py's run_claude(restricted=...)) instead of the
+    # normal --dangerously-skip-permissions one -- a public-facing route
+    # reachable under a different domain than the operator's own.
+    "public_chat_hosts": [],
+    "public_chat_model": "claude-haiku-4-5-20251001",
 }
 
 

@@ -74,6 +74,16 @@ def _run_with_min_duration(message, session_id, session_owner, floor_secs, call_
     return result, error, owner
 
 
+def _run_restricted(message, session_id, session_owner, call_timeout):
+    """Restricted (public, no-tool-access) chat turn -- never goes through
+    _run_with_min_duration: _KEEP_WORKING_PROMPT tells Claude to "install or
+    configure" missing tools, which is nonsensical (and actively misleading)
+    advice for a session that has no tool access at all by design. A
+    restricted reply is just whatever the single call returns."""
+    return claude_daemon.run_claude(
+        message, session_id=session_id, session_owner=session_owner, timeout=call_timeout, restricted=True)
+
+
 def _prune_locked():
     cutoff = time.time() - _PRUNE_AFTER_SECS
     stale = [jid for jid, v in _jobs.items() if v["status"] != "running" and v["created"] < cutoff]
@@ -81,7 +91,7 @@ def _prune_locked():
         del _jobs[jid]
 
 
-def start_job(token, message, session_id, session_owner, timeout_secs, apply_min_hook=True):
+def start_job(token, message, session_id, session_owner, timeout_secs, apply_min_hook=True, restricted=False):
     job_id = uuid.uuid4().hex
     with _lock:
         _prune_locked()
@@ -90,7 +100,8 @@ def start_job(token, message, session_id, session_owner, timeout_secs, apply_min
     def worker():
         # apply_min_hook=False (the "-" tier) skips the floor entirely: no
         # re-prompting, no extra instructions injected, just the plain
-        # capped call.
+        # capped call. restricted=True always skips it too, regardless of
+        # apply_min_hook -- see _run_restricted's docstring.
         #
         # Wrapped in try/except: this runs off the request thread (see
         # module docstring), so an unhandled exception here doesn't fail a
@@ -102,7 +113,9 @@ def start_job(token, message, session_id, session_owner, timeout_secs, apply_min
         # resolve the job to a terminal status, even on a bug we didn't
         # anticipate.
         try:
-            if apply_min_hook:
+            if restricted:
+                result, error, owner_used = _run_restricted(message, session_id, session_owner, timeout_secs)
+            elif apply_min_hook:
                 result, error, owner_used = _run_with_min_duration(
                     message, session_id, session_owner, timeout_secs, timeout_secs)
             else:

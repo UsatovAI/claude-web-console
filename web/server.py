@@ -19,6 +19,14 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self):
         return auth.authed_token(self.headers.get("Cookie"))
 
+    def _is_public_restricted(self):
+        """True for a request that arrived under one of settings.PUBLIC_CHAT_HOSTS
+        -- see core/settings.py's PUBLIC_CHAT_HOSTS docstring for what this
+        does and doesn't guarantee (Host-header based, not an IP-level
+        boundary)."""
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in settings.PUBLIC_CHAT_HOSTS
+
     def _send(self, status, body, headers=None):
         body_b = body.encode() if isinstance(body, str) else body
         self.send_response(status)
@@ -194,15 +202,30 @@ class Handler(BaseHTTPRequestHandler):
         if not message:
             self._send_json(400, {"error": "empty message"})
             return
-        if message.lower() == "/night_deep" or message.lower().startswith("/night_deep "):
-            reply = night_control.handle_command(
-                message[len("/night_deep"):].strip(), force_deep_research=True, token=token)
-            self._send_json(200, {"reply": reply})
-            return
-        if message.lower() == "/night" or message.lower().startswith("/night "):
-            reply = night_control.handle_command(message[len("/night"):].strip(), token=token)
-            self._send_json(200, {"reply": reply})
-            return
+
+        restricted = self._is_public_restricted()
+
+        # Night mode and the GitHub-review trigger below both grant real
+        # tool/execution access -- exactly what a restricted request must
+        # not get, regardless of how it phrases its message -- so both are
+        # refused outright here rather than reachable through a chat message
+        # on this host.
+        if restricted:
+            lowered = message.lower()
+            if lowered == "/night_deep" or lowered.startswith("/night_deep ") or \
+                    lowered == "/night" or lowered.startswith("/night "):
+                self._send_json(200, {"reply": "Night mode isn't available on this endpoint."})
+                return
+        else:
+            if message.lower() == "/night_deep" or message.lower().startswith("/night_deep "):
+                reply = night_control.handle_command(
+                    message[len("/night_deep"):].strip(), force_deep_research=True, token=token)
+                self._send_json(200, {"reply": reply})
+                return
+            if message.lower() == "/night" or message.lower().startswith("/night "):
+                reply = night_control.handle_command(message[len("/night"):].strip(), token=token)
+                self._send_json(200, {"reply": reply})
+                return
 
         # SCRUM-13: a github.com PR/MR URL anywhere in the message is treated
         # as "review this PR" -- fetch its diff, review with code-review-skill,
@@ -214,8 +237,10 @@ class Handler(BaseHTTPRequestHandler):
         # -- when off, a pasted PR link just goes through as a normal chat
         # message instead. This flag only controls whether the feature
         # triggers at all; live posting vs. dry-run is the separate
-        # settings.GITHUB_REVIEW_COMMENT switch, untouched by it.
-        pr_request = settings.GITHUB_REVIEW and github_review.detect_pr_request(message)
+        # settings.GITHUB_REVIEW_COMMENT switch, untouched by it. Also off
+        # unconditionally when restricted -- posting PR comments under the
+        # UsatovAI GitHub identity is tool/execution access, same as above.
+        pr_request = (not restricted) and settings.GITHUB_REVIEW and github_review.detect_pr_request(message)
         if pr_request:
             owner, repo, pr_number, url = pr_request
             job_id = chat_jobs.start_github_review_job(token, owner, repo, pr_number, url)
@@ -226,13 +251,15 @@ class Handler(BaseHTTPRequestHandler):
             data.get("timeout"), settings.TIMEOUT_TIERS[settings.DEFAULT_TIMEOUT_TIER])
         # SCRUM-11: every tier except "-" holds the reply to timeout_secs as a
         # minimum, not just a cap -- see chat_jobs.start_job/_run_with_min_duration.
-        apply_min_hook = data.get("timeout") != settings.NO_MIN_TIER
+        # Never applied when restricted -- see chat_jobs._run_restricted.
+        apply_min_hook = (not restricted) and data.get("timeout") != settings.NO_MIN_TIER
 
         sessions = storage.load_sessions()
         session_entry = sessions.get(token, {})
         job_id = chat_jobs.start_job(
             token, message, session_entry.get("claude_session_id"),
-            session_entry.get("claude_session_owner"), timeout_secs, apply_min_hook=apply_min_hook)
+            session_entry.get("claude_session_owner"), timeout_secs, apply_min_hook=apply_min_hook,
+            restricted=restricted)
         # Returns immediately with a job id instead of blocking on the reply --
         # see chat_jobs.py for why (proxy timeouts well under the longer
         # TIMEOUT_TIERS). The page polls /api/chat/status for the result.

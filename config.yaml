@@ -64,3 +64,21 @@ night_min_session_secs: 600
 # the cookie's own Max-Age -- a stolen/copied session token is only usable
 # for this long, not indefinitely).
 session_max_age_secs: 604800   # 7d
+
+# Hosts that get the restricted chat path (core/settings.py's
+# PUBLIC_CHAT_HOSTS / web/server.py's _is_public_restricted): no
+# --dangerously-skip-permissions, no /night, no GitHub-review trigger,
+# public_chat_model below instead of the default model. chat.usatovpavel.ru
+# is reverse-proxied here from a separate VPS (the one usatovpavel.ru's DNS
+# actually points to) -- see roles/claudeweb_console in ansible-deploy for
+# the reverse-proxy side. Matched against the HTTP Host header only -- see
+# the PUBLIC_CHAT_HOSTS docstring for why that's not an IP-level boundary by
+# itself. usatovai.ru and the sslip.io hostname are deliberately NOT listed
+# here -- operator access via those stays full-capability.
+public_chat_hosts:
+  - chat.usatovpavel.ru
+
+# Model used for the restricted chat path above -- cheapest/smallest current
+# model, since this route is a public demo surface with no tool access
+# rather than the operator's own agentic use.
+public_chat_model: claude-haiku-4-5-20251001

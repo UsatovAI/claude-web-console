@@ -71,7 +71,7 @@ def _looks_like_auth_failure(error_text):
     return any(marker in lower for marker in _AUTH_FAILURE_MARKERS)
 
 
-def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
+def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user, model=None):
     """One subprocess invocation. Both branches run as the same unprivileged
     daemon user (the whole app does, see bootstrap.sh) -- the distinction is
     only whether --dangerously-skip-permissions is passed: with it (using
@@ -100,6 +100,8 @@ def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
     # process can actually reach, so there's no reason for this branch to
     # re-derive a different, less reliable path.
     cmd = [CLAUDE_BIN, "-p", "--output-format", "json"]
+    if model:
+        cmd += ["--model", model]
     if as_daemon_user:
         cmd += ["--dangerously-skip-permissions"]
     if session_id:
@@ -146,13 +148,24 @@ def _run_once(prompt, *, session_id, timeout, extra_args, cwd, as_daemon_user):
     return result, None
 
 
-def run_claude(prompt, *, session_id=None, session_owner=None, timeout, extra_args=None, cwd=None):
+def run_claude(prompt, *, session_id=None, session_owner=None, timeout, extra_args=None, cwd=None, restricted=False):
     """Run one `claude -p` turn, preferring the unprivileged daemon user.
 
-    Returns (result_dict, error, owner) where owner is "claudeweb" or "root"
-    -- the caller should persist it alongside session_id, since a session
-    started under one identity can't be --resume'd under the other (separate
-    ~/.claude/projects transcripts).
+    Returns (result_dict, error, owner) where owner is "claudeweb", "root",
+    or "restricted" -- the caller should persist it alongside session_id,
+    since a session started under one identity can't be --resume'd under
+    another (separate ~/.claude/projects transcripts, and restricted
+    sessions are kept in their own namespace deliberately -- see below).
+
+    restricted=True is not the auth-failure fallback below -- it's an
+    unconditional, caller-requested mode (see web/server.py's
+    _is_public_restricted()) for traffic that must never get tool access
+    regardless of whether the daemon user's own login is healthy: no
+    --dangerously-skip-permissions, no daemon cwd/env/MCP config, and
+    settings.PUBLIC_CHAT_MODEL instead of the default. Its own owner value
+    ("restricted") keeps its sessions from ever being --resume'd as a
+    claudeweb/root one or vice versa, so a restricted conversation can never
+    inherit or hand off into privileged tool access mid-session.
 
     NOTE: since the whole app now runs as the daemon user (not root -- see
     bootstrap.sh), the "root" fallback below is no longer a genuinely
@@ -164,6 +177,13 @@ def run_claude(prompt, *, session_id=None, session_owner=None, timeout, extra_ar
     split gave it -- a broken daemon-user login now means both branches hit
     the same underlying auth. Revisit if that isolation matters again.
     """
+    if restricted:
+        resume_id = session_id if session_owner == "restricted" else None
+        result, error = _run_once(
+            prompt, session_id=resume_id, timeout=timeout, extra_args=extra_args, cwd=cwd,
+            as_daemon_user=False, model=settings.PUBLIC_CHAT_MODEL)
+        return result, error, "restricted"
+
     owner = session_owner or "claudeweb"
     resume_id = session_id if owner == "claudeweb" else None
     result, error = _run_once(

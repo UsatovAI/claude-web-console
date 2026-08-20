@@ -84,6 +84,18 @@ NIGHT_CRON_LOG = os.path.join(LOG_DIR, "night_mode_cron.log")
 GITHUB_REVIEW = bool(config.get("github_review"))
 GITHUB_REVIEW_COMMENT = bool(config.get("github_review_comment"))
 
+# Hosts (matched against the incoming HTTP Host header) that get the
+# restricted chat path: no --dangerously-skip-permissions, no MCP/tool
+# access, no /night or GitHub-review triggers, cheapest model. Intended for
+# a public-facing domain reverse-proxied to this app from outside, kept
+# separate from the operator's own access via CERT_DOMAIN/other hostnames --
+# see web/server.py's _is_public_restricted(). NOT a network-level security
+# boundary by itself (this app has no IP allowlisting -- see bootstrap.sh),
+# only as strong as whatever fronts it actually enforcing which Host header
+# reaches it.
+PUBLIC_CHAT_HOSTS = {h.lower() for h in (config.get("public_chat_hosts") or [])}
+PUBLIC_CHAT_MODEL = config.get("public_chat_model")
+
 # ~8h autonomous night-mode loop (daemon/night_mode.py): total wall-clock
 # budget, the longest any single `claude -p` call within it may run, and the
 # minimum session length its Stop hook enforces on the executor role so it
